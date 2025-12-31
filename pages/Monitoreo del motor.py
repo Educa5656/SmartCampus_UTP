@@ -3,23 +3,33 @@ import pandas as pd
 import altair as alt
 import math
 import datetime as dt
+import glob
+import os
 
-# Ruta del archivo CSV
-CSV_FILE = "Data_udp/smartcampusudp.csv"
+# 📁 Carpeta donde se guardan los CSV diarios
+CSV_FOLDER = "Data_udp/diarios/"
 
 st.set_page_config(page_title="Dashboard Sensores", layout="wide")
 st.title("📊 Estado bomba agua helada cuarto de máquinas")
 
-# --- Cargar CSV con cache ---
+# --- Cargar CSV diarios con cache ---
 @st.cache_data(ttl=10)
-def load_csv(path):
-    df = pd.read_csv(path, engine="pyarrow")
+def load_daily_csvs(folder):
+    archivos = glob.glob(os.path.join(folder, "*.csv"))
+    if not archivos:
+        return pd.DataFrame()
+    
+    df = pd.concat(
+        (pd.read_csv(f, engine="pyarrow") for f in archivos),
+        ignore_index=True
+    )
+    
     if "time" in df.columns:
         df["time"] = pd.to_datetime(df["time"], errors="coerce")
         df = df.dropna(subset=["time"])
     return df
 
-df = load_csv(CSV_FILE)
+df = load_daily_csvs(CSV_FOLDER)
 
 # --- Helper: calcular dominio Y ---
 def compute_y_domain(series):
@@ -48,7 +58,6 @@ def plot_line(df, y_cols, title="", y_label="Valor"):
     if df_melted.empty:
         return alt.Chart(pd.DataFrame({"time": [], "valor": [], "variable": []})).mark_line()
 
-    # --- Ventana de 3 horas ---
     max_time = df_melted["time"].max()
     min_time = max_time - dt.timedelta(hours=3)
     df_melted = df_melted[df_melted["time"].between(min_time, max_time)]
@@ -75,7 +84,7 @@ def plot_line(df, y_cols, title="", y_label="Valor"):
     )
     return chart
 
-# --- Selección de día ---
+# --- FILTRO POR DÍA ---
 if not df.empty:
     dias_disponibles = sorted(df["time"].dt.date.unique(), reverse=True)
     dia_seleccionado = st.selectbox("📅 Selecciona un día", dias_disponibles)
@@ -84,7 +93,6 @@ if not df.empty:
     if df.empty:
         st.warning("⚠️ No hay datos para este día.")
     else:
-        # --- Resample solo si hay suficientes datos ---
         if df["time"].nunique() > 1:
             df = df.set_index("time").resample("200ms").mean().reset_index()
 
@@ -100,7 +108,6 @@ if not df.empty:
             except Exception:
                 return "N/A"
 
-        # Métricas principales
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.metric("🌡️ Temperatura", f"{safe_metric(latest, 'temperature', '.1f')} °C")
@@ -113,7 +120,6 @@ if not df.empty:
         with col5:
             st.metric("🏭 Calidad Aire (IAQ)", f"{safe_metric(latest, 'iaq', '.0f')} ppm")
 
-        # Segunda fila de métricas (Aceleración RMS en X, Y, Z)
         col6, col7, col8 = st.columns(3)
         with col6:
             st.metric("📈 Aceleración X", f"{safe_metric(latest, 'accXRMS', '.2f')} m/s²")
@@ -124,7 +130,6 @@ if not df.empty:
 
         st.divider()
 
-        # --- Gráficos ---
         st.subheader("📈 Aceleración (RMS)")
         st.altair_chart(plot_line(df, ["accXRMS", "accYRMS", "accZRMS"], "Aceleración RMS", y_label="m/s² (RMS)"),
                         use_container_width=True)
@@ -149,4 +154,4 @@ if not df.empty:
         st.altair_chart(plot_line(df, ["anomaly"], "Anomaly Score", y_label="Score"),
                         use_container_width=True)
 else:
-    st.warning("⚠️ No se encontraron datos en el archivo CSV.")
+    st.warning("⚠️ No se encontraron datos CSV en la carpeta de diarios.")
